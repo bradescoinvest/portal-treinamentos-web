@@ -1,0 +1,45 @@
+name: Restore static build 20261112
+on:
+  push:
+    paths:
+      - '.github/workflows/restore-static.yml'
+permissions:
+  contents: write
+jobs:
+  restore:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore unchanged ZIP build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib,shutil,subprocess,tempfile
+          root=pathlib.Path.cwd()
+          data=(root/'dist-pronto.zip').read_bytes()
+          assert hashlib.sha256(data).hexdigest()=='b314d1e52bc57481ab54f9dd59541ef783b86ae12cb64e63b08eb606aaeab7be'
+          z=zipfile.ZipFile(root/'dist-pronto.zip')
+          expected={'index.html','favicon.svg','_redirects','assets','pdf'}
+          assert {n.split('/')[0] for n in z.namelist()}==expected
+          assert all(not pathlib.PurePosixPath(n).is_absolute() and '..' not in pathlib.PurePosixPath(n).parts for n in z.namelist())
+          temp=pathlib.Path(tempfile.mkdtemp())
+          z.extractall(temp)
+          for p in root.iterdir():
+              if p.name not in {'.git','.github'}:
+                  shutil.rmtree(p) if p.is_dir() else p.unlink()
+          for name in expected:
+              source=temp/name
+              shutil.copytree(source,root/name) if source.is_dir() else shutil.copy2(source,root/name)
+          for n in z.namelist():
+              if not n.endswith('/'):
+                  assert (root/n).read_bytes()==z.read(n),n
+          assert {p.name for p in root.iterdir()}==expected|{'.git','.github'}
+          print('Verified all 77 files byte-for-byte against ZIP')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Restore intact static build from dist-pronto.zip"
+          git push origin HEAD:main
